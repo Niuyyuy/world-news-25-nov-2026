@@ -1,49 +1,53 @@
-"""Publish the finished 25 November 2026 front page.
+"""Ship the reviewed 25 November 2026 front page to the harness.
 
-The picture itself is rendered ahead of time and committed next to this
-file as ``entry.png``.  This script only moves that reviewed image into
-the folder the harness reads from, byte for byte, so the picture the
-judge sees is exactly the one in the repository.  It uses no network,
-no clock and no randomness, so repeated runs publish identical files.
+``entry.png`` next to this file is the finished, reviewed picture.  This
+entry point does nothing creative: it places an exact copy of that file
+in the directory the harness reads (``MAKEFUN_OUTPUT_DIR``, falling back
+to ``/output``).  No network, no clock, no randomness, so every run
+publishes the same bytes.
 """
 
 import hashlib
 import os
 import shutil
+import sys
 from pathlib import Path
 
 
-def digest(path: Path) -> str:
-    """SHA-256 of a file, read in chunks."""
+def fingerprint(path: Path) -> str:
+    """SHA-256 of a file, streamed in 64 KiB blocks."""
     hasher = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            hasher.update(chunk)
+    with path.open("rb") as stream:
+        while True:
+            block = stream.read(65536)
+            if not block:
+                break
+            hasher.update(block)
     return hasher.hexdigest()
 
 
-def main() -> None:
-    here = Path(__file__).resolve().parent
-    source = here / "entry.png"
+def publish() -> int:
+    base = Path(__file__).resolve().parent
+    picture = base / "entry.png"
+    if not picture.is_file():
+        print("missing entry image: %s" % picture, file=sys.stderr)
+        return 1
 
-    out_dir = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
-    out_dir.mkdir(parents=True, exist_ok=True)
+    destination = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
+    destination.mkdir(parents=True, exist_ok=True)
+    target = destination / "entry.png"
+    shutil.copyfile(picture, target)
 
-    target = out_dir / "entry.png"
-    shutil.copyfile(source, target)
-
-    # The published copy must match the committed image exactly,
-    # in size and in content.
-    if target.stat().st_size != source.stat().st_size:
-        raise SystemExit(
-            "Copy mismatch: %s is %d bytes, expected %d bytes from %s"
-            % (target, target.stat().st_size, source.stat().st_size, source)
-        )
-    if digest(target) != digest(source):
-        raise SystemExit("Copy mismatch: %s differs from %s" % (target, source))
-    print("Published %s -> %s (%d bytes, sha256 %s)"
-          % (source, target, target.stat().st_size, digest(target)))
+    if target.stat().st_size != picture.stat().st_size:
+        print("size mismatch after copy", file=sys.stderr)
+        return 1
+    if fingerprint(target) != fingerprint(picture):
+        print("content mismatch after copy", file=sys.stderr)
+        return 1
+    print("published %s (%d bytes, sha256 %s)"
+          % (target, target.stat().st_size, fingerprint(target)))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(publish())
